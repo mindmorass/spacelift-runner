@@ -44,13 +44,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch,suffix=-alpine
+            type=ref,event=pr,suffix=-alpine
+            type=semver,pattern={{version}},suffix=-alpine
+            type=semver,pattern={{major}}.{{minor}},suffix=-alpine
+            type=semver,pattern={{major}},suffix=-alpine
+            type=sha,prefix={{branch}}-,suffix=-alpine
+            type=raw,value=alpine,enable={{is_default_branch}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
