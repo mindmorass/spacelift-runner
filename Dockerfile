@@ -34,27 +34,49 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/sh
 # Create apk compatibility wrapper for scripts that expect Alpine package manager
 # This allows workspace hooks/scripts written for Alpine to work on Ubuntu
 # Spacelift initialization scripts may call apk, so this must be available early
+# Handles nosuid filesystem by detecting sudo availability and providing clear errors
 RUN printf '#!/bin/bash\n\
     set -e\n\
+    \n\
+    # Function to run apt-get with appropriate privileges\n\
+    run_apt_get() {\n\
     if [ "$(id -u)" -eq 0 ]; then\n\
-    CMD=""\n\
+    # Already root, run directly\n\
+    apt-get "$@"\n\
     elif command -v sudo >/dev/null 2>&1; then\n\
-    CMD="sudo "\n\
+    # Try to use sudo, but detect if it will fail due to nosuid\n\
+    # Test sudo with a quick command that should work if sudo is functional\n\
+    if sudo -n echo >/dev/null 2>&1 || (timeout 0.5 sudo echo >/dev/null 2>&1); then\n\
+    sudo apt-get "$@"\n\
+    else\n\
+    # Sudo exists but fails (likely nosuid filesystem)\n\
+    echo "Error: Cannot use sudo (filesystem mounted with nosuid)." >&2\n\
+    echo "Package installation requires root privileges." >&2\n\
+    echo "Solution: Ensure Spacelift initialization hooks run with root privileges," >&2\n\
+    echo "  or pre-install required packages in the Docker image." >&2\n\
+    exit 1\n\
     fi\n\
+    else\n\
+    # No sudo available\n\
+    echo "Error: Cannot install packages. Root privileges required and sudo is not available." >&2\n\
+    exit 1\n\
+    fi\n\
+    }\n\
+    \n\
     case "$1" in\n\
     add|install)\n\
     shift\n\
-    ${CMD}apt-get update && ${CMD}apt-get install -y --no-install-recommends "$@"\n\
+    run_apt_get update && run_apt_get install -y --no-install-recommends "$@"\n\
     ;;\n\
     del|remove)\n\
     shift\n\
-    ${CMD}apt-get remove -y "$@"\n\
+    run_apt_get remove -y "$@"\n\
     ;;\n\
     update)\n\
-    ${CMD}apt-get update\n\
+    run_apt_get update\n\
     ;;\n\
     upgrade)\n\
-    ${CMD}apt-get update && ${CMD}apt-get upgrade -y\n\
+    run_apt_get update && run_apt_get upgrade -y\n\
     ;;\n\
     search)\n\
     shift\n\
@@ -65,7 +87,7 @@ RUN printf '#!/bin/bash\n\
     apt-get --version\n\
     ;;\n\
     *)\n\
-    ${CMD}apt-get "$@"\n\
+    run_apt_get "$@"\n\
     ;;\n\
     esac\n\
     ' > /usr/local/bin/apk && chmod +x /usr/local/bin/apk
