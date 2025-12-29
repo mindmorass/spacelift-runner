@@ -23,6 +23,6 @@ RUN pip3 install --no-cache-dir \
 # Clean up build dependencies to reduce image size (optional but recommended)
 RUN apk del gcc musl-dev libffi-dev krb5-dev
 
-# Switch back to the spacelift user (if the base image uses it)
-# This ensures the image runs with the same user as the base
-USER spacelift
+# Keep as root to allow Spacelift initialization hooks to install packages
+# Spacelift initialization hooks may need root access to run 'apk add' commands
+# The base image may handle user switching during execution if needed
