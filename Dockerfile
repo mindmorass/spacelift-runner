@@ -34,49 +34,80 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/sh
 # Create apk compatibility wrapper for scripts that expect Alpine package manager
 # This allows workspace hooks/scripts written for Alpine to work on Ubuntu
 # Spacelift initialization scripts may call apk, so this must be available early
-# Handles nosuid filesystem by detecting sudo availability and providing clear errors
+# Handles nosuid filesystem by checking if packages are already installed
 RUN printf '#!/bin/bash\n\
     set -e\n\
+    \n\
+    # Function to check if a package is installed\n\
+    is_package_installed() {\n\
+    dpkg -l "$1" 2>/dev/null | grep -q "^ii"\n\
+    }\n\
     \n\
     # Function to run apt-get with appropriate privileges\n\
     run_apt_get() {\n\
     if [ "$(id -u)" -eq 0 ]; then\n\
-    # Already root, run directly\n\
     apt-get "$@"\n\
     elif command -v sudo >/dev/null 2>&1; then\n\
-    # Try to use sudo, but detect if it will fail due to nosuid\n\
-    # Test sudo with a quick command that should work if sudo is functional\n\
     if sudo -n echo >/dev/null 2>&1 || (timeout 0.5 sudo echo >/dev/null 2>&1); then\n\
     sudo apt-get "$@"\n\
     else\n\
-    # Sudo exists but fails (likely nosuid filesystem)\n\
-    echo "Error: Cannot use sudo (filesystem mounted with nosuid)." >&2\n\
-    echo "Package installation requires root privileges." >&2\n\
-    echo "Solution: Ensure Spacelift initialization hooks run with root privileges," >&2\n\
-    echo "  or pre-install required packages in the Docker image." >&2\n\
-    exit 1\n\
+    return 1\n\
     fi\n\
     else\n\
-    # No sudo available\n\
-    echo "Error: Cannot install packages. Root privileges required and sudo is not available." >&2\n\
-    exit 1\n\
+    return 1\n\
     fi\n\
     }\n\
     \n\
     case "$1" in\n\
     add|install)\n\
     shift\n\
+    # Check if we can install packages\n\
+    if [ "$(id -u)" -eq 0 ] || (command -v sudo >/dev/null 2>&1 && (sudo -n echo >/dev/null 2>&1 || timeout 0.5 sudo echo >/dev/null 2>&1)); then\n\
+    # Can install, proceed normally\n\
     run_apt_get update && run_apt_get install -y --no-install-recommends "$@"\n\
+    else\n\
+    # Cannot install - check if packages are already installed\n\
+    echo "Warning: Cannot install packages (nosuid filesystem or no root access). Checking if already installed..." >&2\n\
+    ALL_INSTALLED=true\n\
+    for pkg in "$@"; do\n\
+    # Remove version specifiers if present (e.g., "package=1.0" -> "package")\n\
+    pkg_name="${pkg%%=*}"\n\
+    if ! is_package_installed "$pkg_name"; then\n\
+    echo "  Package $pkg_name is NOT installed" >&2\n\
+    ALL_INSTALLED=false\n\
+    else\n\
+    echo "  Package $pkg_name is already installed" >&2\n\
+    fi\n\
+    done\n\
+    if [ "$ALL_INSTALLED" = "true" ]; then\n\
+    echo "All requested packages are already installed. Skipping installation." >&2\n\
+    exit 0\n\
+    else\n\
+    echo "Error: Some packages are not installed and cannot be installed without root privileges." >&2\n\
+    echo "Solution: Pre-install required packages in the Docker image." >&2\n\
+    exit 1\n\
+    fi\n\
+    fi\n\
     ;;\n\
     del|remove)\n\
     shift\n\
     run_apt_get remove -y "$@"\n\
     ;;\n\
     update)\n\
+    if [ "$(id -u)" -eq 0 ] || (command -v sudo >/dev/null 2>&1 && (sudo -n echo >/dev/null 2>&1 || timeout 0.5 sudo echo >/dev/null 2>&1)); then\n\
     run_apt_get update\n\
+    else\n\
+    echo "Warning: Cannot update package list (nosuid filesystem). Skipping." >&2\n\
+    exit 0\n\
+    fi\n\
     ;;\n\
     upgrade)\n\
+    if [ "$(id -u)" -eq 0 ] || (command -v sudo >/dev/null 2>&1 && (sudo -n echo >/dev/null 2>&1 || timeout 0.5 sudo echo >/dev/null 2>&1)); then\n\
     run_apt_get update && run_apt_get upgrade -y\n\
+    else\n\
+    echo "Warning: Cannot upgrade packages (nosuid filesystem). Skipping." >&2\n\
+    exit 0\n\
+    fi\n\
     ;;\n\
     search)\n\
     shift\n\
