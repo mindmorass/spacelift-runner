@@ -31,6 +31,58 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/sh
     apt-get install -y terraform && \
     rm -rf /var/lib/apt/lists/*
 
+# Create apk compatibility wrapper for scripts that expect Alpine package manager
+# This allows workspace hooks/scripts written for Alpine to work on Ubuntu
+# Spacelift initialization scripts may call apk, so this must be available early
+RUN printf '#!/bin/bash\n\
+    set -e\n\
+    if [ "$(id -u)" -eq 0 ]; then\n\
+    CMD=""\n\
+    elif command -v sudo >/dev/null 2>&1; then\n\
+    CMD="sudo "\n\
+    fi\n\
+    case "$1" in\n\
+    add|install)\n\
+    shift\n\
+    ${CMD}apt-get update && ${CMD}apt-get install -y --no-install-recommends "$@"\n\
+    ;;\n\
+    del|remove)\n\
+    shift\n\
+    ${CMD}apt-get remove -y "$@"\n\
+    ;;\n\
+    update)\n\
+    ${CMD}apt-get update\n\
+    ;;\n\
+    upgrade)\n\
+    ${CMD}apt-get update && ${CMD}apt-get upgrade -y\n\
+    ;;\n\
+    search)\n\
+    shift\n\
+    apt-cache search "$@"\n\
+    ;;\n\
+    --version|-v)\n\
+    echo "apk compatibility wrapper for Ubuntu (translates to apt-get)"\n\
+    apt-get --version\n\
+    ;;\n\
+    *)\n\
+    ${CMD}apt-get "$@"\n\
+    ;;\n\
+    esac\n\
+    ' > /usr/local/bin/apk && chmod +x /usr/local/bin/apk
+
+# Ensure /usr/local/bin is in PATH (should be default, but explicit for Spacelift)
+ENV PATH="/usr/local/bin:${PATH}"
+
+# Install sudo for the spacelift user (needed if hooks run as non-root)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends sudo && \
+    echo "spacelift ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
+    rm -rf /var/lib/apt/lists/*
+
+# Verify apk wrapper is working
+RUN apk --version && \
+    which apk
+
 # Set working directory
 WORKDIR /home/spacelift
 
